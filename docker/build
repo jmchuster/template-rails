@@ -1,0 +1,48 @@
+#!/bin/sh
+
+PROJECT_PATH="$( cd "$( dirname $0 )/.." && pwd )"
+source $PROJECT_PATH/docker/vars
+
+# start docker on the mac
+dinghy up
+
+# start db
+docker run -d --name db \
+  -v "/etc/postgresql" \
+  -v "/var/log/postgresql" \
+  -v "/var/lib/postgresql" \
+  -p 5432:5432 \
+  postgres:9.5.2
+docker start db
+
+# start redis
+docker run -d --name redis \
+  -p 6379:6379 \
+  redis:2.8 \
+  redis-server --appendonly yes
+docker start redis
+
+# rebuild the image
+docker build -t local/$APP $PROJECT_PATH/docker
+
+# remove the old image
+docker rm -f $APP
+
+# start the new image
+docker run -d --name $APP \
+  -v $PROJECT_PATH/webapp:/home/app/webapp \
+  -p 80:80 -p 443:443 \
+  --link db:db \
+  --link redis:redis \
+  -e "DATABASE_URL=$DATABASE_URL" \
+  -e "RAILS_RESQUE_REDIS=$RAILS_RESQUE_REDIS" \
+  --dns 8.8.8.8 --dns 8.8.4.4 \
+  local/$APP
+
+# bundle install
+docker exec $APP bundle install
+
+# fire up bash
+docker exec -it $APP bash -l
+
+# ./puma
